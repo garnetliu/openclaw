@@ -364,10 +364,15 @@ export class TelnyxProvider implements VoiceCallProvider {
 
       const state = result?.data?.state || "unknown";
       const normalized = state.toLowerCase();
-      const isAlive = result?.data?.is_alive ?? false;
+      const isAlive = result?.data?.is_alive;
+      
+      // If is_alive is undefined, treat as unknown/non-terminal
+      // Only treat as terminal if is_alive is explicitly false or state is terminal
+      const isTerminal = (isAlive === false) || terminalStatuses.has(normalized);
+      
       return {
         status: state,
-        isTerminal: !isAlive || terminalStatuses.has(normalized),
+        isTerminal,
       };
     } catch (err) {
       // For network errors, timeouts, etc., treat as unknown/non-terminal

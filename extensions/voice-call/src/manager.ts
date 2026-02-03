@@ -287,13 +287,23 @@ export class CallManager {
    * Start max duration timer for a call.
    * Auto-hangup when maxDurationSeconds is reached.
    */
-  private startMaxDurationTimer(callId: CallId): void {
+  private startMaxDurationTimer(callId: CallId, remainingMs?: number): void {
     // Clear any existing timer
     this.clearMaxDurationTimer(callId);
 
     const maxDurationMs = this.config.maxDurationSeconds * 1000;
+    const timeoutMs = remainingMs !== undefined ? Math.max(0, remainingMs) : maxDurationMs;
+    
+    // Skip if timeout is 0 or negative
+    if (timeoutMs <= 0) {
+      console.log(
+        `[voice-call] Skipping max duration timer for call ${callId} (remaining time: ${timeoutMs}ms)`,
+      );
+      return;
+    }
+
     console.log(
-      `[voice-call] Starting max duration timer (${this.config.maxDurationSeconds}s) for call ${callId}`,
+      `[voice-call] Starting max duration timer (${Math.round(timeoutMs / 1000)}s remaining of ${this.config.maxDurationSeconds}s total) for call ${callId}`,
     );
 
     const timer = setTimeout(async () => {
@@ -301,13 +311,13 @@ export class CallManager {
       const call = this.getCall(callId);
       if (call && !TerminalStates.has(call.state)) {
         console.log(
-          `[voice-call] Max duration reached (${this.config.maxDurationSeconds}s), ending call ${callId}`,
+          `[voice-call] Max duration reached (${this.config.maxDurationSeconds}s total), ending call ${callId}`,
         );
         call.endReason = "timeout";
         this.persistCallRecord(call);
         await this.endCall(callId);
       }
-    }, maxDurationMs);
+    }, timeoutMs);
 
     this.maxDurationTimers.set(callId, timer);
   }
@@ -856,7 +866,11 @@ export class CallManager {
       }
       // Start max duration timer for restored calls that are in active states
       if (!TerminalStates.has(call.state) && call.state !== "initiated") {
-        this.startMaxDurationTimer(callId);
+        // Calculate remaining time based on when call started
+        const maxDurationMs = this.config.maxDurationSeconds * 1000;
+        const callAge = now - call.startedAt;
+        const remainingMs = maxDurationMs - callAge;
+        this.startMaxDurationTimer(callId, remainingMs);
       }
     };
 
@@ -902,9 +916,22 @@ export class CallManager {
           break;
         }
 
-        const status = await provider.getCallStatus({
-          providerCallId: call.providerCallId!,
-        });
+        let status;
+        try {
+          status = await provider.getCallStatus({
+            providerCallId: call.providerCallId!,
+          });
+        } catch (err) {
+          // If provider.getCallStatus throws unexpectedly, treat as unknown/non-terminal
+          console.log(
+            `[voice-call] Provider.getCallStatus threw for call ${callId}: ${err instanceof Error ? err.message : String(err)}. Treating as unknown/non-terminal.`,
+          );
+          status = {
+            status: "unknown",
+            isTerminal: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
 
         if (status.isTerminal) {
           console.log(
