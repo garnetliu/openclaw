@@ -420,9 +420,18 @@ export class PlivoProvider implements VoiceCallProvider {
       );
 
       if (!response.ok) {
+        // 404 means call doesn't exist - treat as terminal
+        if (response.status === 404) {
+          return {
+            status: "not-found",
+            isTerminal: true,
+            error: "Call not found (404)",
+          };
+        }
+        // For other HTTP errors, treat as unknown/non-terminal
         return {
           status: "unknown",
-          isTerminal: true,
+          isTerminal: false,
           error: `Plivo API error: ${response.status}`,
         };
       }
@@ -435,9 +444,11 @@ export class PlivoProvider implements VoiceCallProvider {
         isTerminal: terminalStatuses.has(normalized),
       };
     } catch (err) {
+      // For network errors, timeouts, etc., treat as unknown/non-terminal
+      // Only definite terminal errors (like 404) should be isTerminal: true
       return {
         status: "unknown",
-        isTerminal: true,
+        isTerminal: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }

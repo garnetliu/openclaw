@@ -854,6 +854,10 @@ export class CallManager {
       for (const eventId of call.processedEventIds) {
         this.processedEventIds.add(eventId);
       }
+      // Start max duration timer for restored calls that are in active states
+      if (!TerminalStates.has(call.state) && call.state !== "initiated") {
+        this.startMaxDurationTimer(callId);
+      }
     };
 
     // Only keep non-terminal calls that are verified active
@@ -898,25 +902,18 @@ export class CallManager {
           break;
         }
 
-        try {
-          const status = await provider.getCallStatus({
-            providerCallId: call.providerCallId!,
-          });
+        const status = await provider.getCallStatus({
+          providerCallId: call.providerCallId!,
+        });
 
-          if (status.isTerminal) {
-            console.log(
-              `[voice-call] Skipping ended call ${callId} (provider status: ${status.status})`,
-            );
-            continue;
-          }
-
-          registerActiveCall(callId, call);
-        } catch (err) {
-          // If we can't verify, skip the call to be safe
+        if (status.isTerminal) {
           console.log(
-            `[voice-call] Skipping unverifiable call ${callId}: ${err instanceof Error ? err.message : String(err)}`,
+            `[voice-call] Skipping ended call ${callId} (provider status: ${status.status})`,
           );
+          continue;
         }
+
+        registerActiveCall(callId, call);
       }
     });
 

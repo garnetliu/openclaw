@@ -593,6 +593,15 @@ export class TwilioProvider implements VoiceCallProvider {
         { allowNotFound: true },
       );
 
+      // If result is undefined (404), call doesn't exist - treat as terminal
+      if (result === undefined) {
+        return {
+          status: "not-found",
+          isTerminal: true,
+          error: "Call not found (404)",
+        };
+      }
+
       const status = result?.status || "unknown";
       const normalized = status.toLowerCase();
       return {
@@ -600,10 +609,11 @@ export class TwilioProvider implements VoiceCallProvider {
         isTerminal: terminalStatuses.has(normalized),
       };
     } catch (err) {
-      // If we can't reach Twilio, assume call is stale
+      // For network errors, timeouts, etc., treat as unknown/non-terminal
+      // Only definite terminal errors (like 404) should be isTerminal: true
       return {
         status: "unknown",
-        isTerminal: true,
+        isTerminal: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }

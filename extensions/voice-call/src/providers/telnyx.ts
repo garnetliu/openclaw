@@ -353,6 +353,15 @@ export class TelnyxProvider implements VoiceCallProvider {
         { allowNotFound: true },
       );
 
+      // If result is undefined (404), call doesn't exist - treat as terminal
+      if (result === undefined) {
+        return {
+          status: "not-found",
+          isTerminal: true,
+          error: "Call not found (404)",
+        };
+      }
+
       const state = result?.data?.state || "unknown";
       const normalized = state.toLowerCase();
       const isAlive = result?.data?.is_alive ?? false;
@@ -361,9 +370,11 @@ export class TelnyxProvider implements VoiceCallProvider {
         isTerminal: !isAlive || terminalStatuses.has(normalized),
       };
     } catch (err) {
+      // For network errors, timeouts, etc., treat as unknown/non-terminal
+      // Only definite terminal errors (like 404) should be isTerminal: true
       return {
         status: "unknown",
-        isTerminal: true,
+        isTerminal: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }
