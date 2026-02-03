@@ -1,5 +1,6 @@
 import process from "node:process";
 
+import { isAllModelsFailedError, AllModelsFailedError } from "../agents/model-fallback-error.js";
 import { extractErrorCode, formatUncaughtError } from "./errors.js";
 
 type UnhandledRejectionHandler = (reason: unknown) => boolean;
@@ -37,13 +38,17 @@ const TRANSIENT_NETWORK_CODES = new Set([
 ]);
 
 function getErrorCause(err: unknown): unknown {
-  if (!err || typeof err !== "object") return undefined;
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
   return (err as { cause?: unknown }).cause;
 }
 
 function extractErrorCodeWithCause(err: unknown): string | undefined {
   const direct = extractErrorCode(err);
-  if (direct) return direct;
+  if (direct) {
+    return direct;
+  }
   return extractErrorCode(getErrorCause(err));
 }
 
@@ -52,12 +57,18 @@ function extractErrorCodeWithCause(err: unknown): string | undefined {
  * These are typically intentional cancellations (e.g., during shutdown) and shouldn't crash.
  */
 export function isAbortError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
+  if (!err || typeof err !== "object") {
+    return false;
+  }
   const name = "name" in err ? String(err.name) : "";
-  if (name === "AbortError") return true;
+  if (name === "AbortError") {
+    return true;
+  }
   // Check for "This operation was aborted" message from Node's undici
   const message = "message" in err && typeof err.message === "string" ? err.message : "";
-  if (message === "This operation was aborted") return true;
+  if (message === "This operation was aborted") {
+    return true;
+  }
   return false;
 }
 
@@ -76,15 +87,21 @@ function isConfigError(err: unknown): boolean {
  * These are typically temporary connectivity issues that will resolve on their own.
  */
 export function isTransientNetworkError(err: unknown): boolean {
-  if (!err) return false;
+  if (!err) {
+    return false;
+  }
 
   const code = extractErrorCodeWithCause(err);
-  if (code && TRANSIENT_NETWORK_CODES.has(code)) return true;
+  if (code && TRANSIENT_NETWORK_CODES.has(code)) {
+    return true;
+  }
 
   // "fetch failed" TypeError from undici (Node's native fetch)
   if (err instanceof TypeError && err.message === "fetch failed") {
     const cause = getErrorCause(err);
-    if (cause) return isTransientNetworkError(cause);
+    if (cause) {
+      return isTransientNetworkError(cause);
+    }
     return true;
   }
 
@@ -112,7 +129,9 @@ export function registerUnhandledRejectionHandler(handler: UnhandledRejectionHan
 export function isUnhandledRejectionHandled(reason: unknown): boolean {
   for (const handler of handlers) {
     try {
-      if (handler(reason)) return true;
+      if (handler(reason)) {
+        return true;
+      }
     } catch (err) {
       console.error(
         "[openclaw] Unhandled rejection handler failed:",
@@ -125,12 +144,31 @@ export function isUnhandledRejectionHandled(reason: unknown): boolean {
 
 export function installUnhandledRejectionHandler(): void {
   process.on("unhandledRejection", (reason, _promise) => {
-    if (isUnhandledRejectionHandled(reason)) return;
+    if (isUnhandledRejectionHandled(reason)) {
+      return;
+    }
 
     // AbortError is typically an intentional cancellation (e.g., during shutdown)
     // Log it but don't crash - these are expected during graceful shutdown
     if (isAbortError(reason)) {
       console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
+      return;
+    }
+
+    // Handle AllModelsFailedError - don't crash when all profiles are in cooldown
+    if (isAllModelsFailedError(reason)) {
+      const err = reason as AllModelsFailedError;
+      if (err.allInCooldown) {
+        const mins = err.retryAfterMs ? Math.round(err.retryAfterMs / 60000) : "unknown";
+        console.warn(
+          `[moltbot] All models in cooldown - gateway continuing normally. ` +
+            `Retry after ${mins}min. ` +
+            `Attempts: ${err.attempts.map((a: any) => a.provider).join(", ")}`,
+        );
+        return; // Don't exit!
+      }
+      // Mixed failures - log but don't crash
+      console.warn("[moltbot] All models failed (mixed reasons):", formatUncaughtError(err));
       return;
     }
 
